@@ -82,4 +82,4 @@ jobs:
           # Requirement: Minikube Tunnel
           nohup minikube tunnel > tunnel.log 2>&1 &
           echo -e "\n--- Service Status ---"
-          kubectl get servi
+          kubectl get service
