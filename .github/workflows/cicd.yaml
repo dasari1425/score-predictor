@@ -62,35 +62,43 @@ jobs:
 
       - name: 3. Update Deployment with new Image Tag
         run: |
-          # Construct the image name using the output from the previous job
           IMAGE_NAME="${{ secrets.DOCKER_USERNAME }}/score1:${{ needs.build-and-push.outputs.image_tag }}"
-          
-          # Replace placeholder in deployment.yaml
-          # Ensure your deployment.yaml has the string __IMAGE_NAME__ in the image field
+          # Matches __IMAGE_NAME__ in your deployment.yaml
           sed -i "s|__IMAGE_NAME__|$IMAGE_NAME|g" deployment.yaml
-          
-          echo "Updated deployment.yaml to use image: $IMAGE_NAME"
 
       - name: 4. Deploy Application
         run: |
           kubectl apply -f deployment.yaml
           kubectl apply -f service.yaml
 
-      - name: 5. Start Minikube Tunnel (Background)
+      - name: 5. Start Background Services (Dashboard & Tunnel)
         run: |
-          # Start tunnel in background. 
-          # We use 'nohup' and '&' so the workflow doesn't hang.
+          # Start Dashboard in background
+          nohup minikube dashboard --url > dashboard.log 2>&1 &
+          
+          # Start Tunnel in background
+          # We use sudo because some environments require it for network routing
           nohup minikube tunnel > tunnel.log 2>&1 &
           
-          # Give the tunnel a moment to establish routes
-          sleep 10
+          # Give services time to stabilize
+          sleep 15
 
-      - name: 6. Verify Deployment & External IP
+      - name: 6. Verify Deployment & Connection
         run: |
+          # Wait for pods to be ready
           kubectl rollout status deployment/score-deployment --timeout=120s
           
-          echo -e "\n--- Pod Status ---"
-          kubectl get pods
+          # Get the External IP assigned by the tunnel
+          SERVICE_IP=$(kubectl get svc score -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "Service is live at: http://$SERVICE_IP"
           
-          echo -e "\n--- Service Status ---"
-          kubectl get service
+          # Check Service Connectivity
+          curl -v --connect-timeout 5 http://$SERVICE_IP || echo "External IP not yet reachable, trying Localhost"
+          
+          # Fallback check via localhost (common in tunnel environments)
+          curl -v --connect-timeout 5 http://localhost:80
+
+      - name: 7. Log Dashboard URL
+        run: |
+          # Extract URL from logs for visibility
+          grep "http" dashboard.log || echo "Dashboard starting..."
