@@ -6,15 +6,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Job 1: Build and Push to Docker Hub
+  # Requirement: Job 1 - containerise-model
   containerise-model:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -22,57 +19,58 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Push Image
+      - name: Build and Push to Docker Hub
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
+          # Note: Using 'latest' for simplicity in the pull job
           tags: ${{ secrets.DOCKER_USERNAME }}/score-predictor:latest
 
-  # Job 2: Pull from Docker Hub and Deploy to Minikube
+  # Requirement: Job 2 - pull-image-job (Depends on Job 1)
   pull-image-job:
     runs-on: ubuntu-latest
-    needs: containerise-model # Ensures Job 2 only runs if Job 1 succeeds
+    needs: containerise-model
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Minikube
+      - name: Setup and Start Minikube
         uses: medyagh/setup-minikube@latest
 
-      - name: Start Minikube Dashboard
+      - name: Start Minikube Dashboard & Tunnel
         run: |
+          # Starting background services for your screenshots
           nohup minikube dashboard --url > dashboard.log 2>&1 &
+          nohup minikube tunnel > tunnel.log 2>&1 &
+          sleep 20
 
       - name: Deploy to Minikube
         run: |
-          # Updating the image in your deployment manifest
+          # Update the manifest to use your specific Docker Hub image
           sed -i "s|image:.*|image: ${{ secrets.DOCKER_USERNAME }}/score-predictor:latest|g" deployment.yaml
           kubectl apply -f deployment.yaml
           kubectl apply -f service.yaml
 
-      - name: Start Minikube Tunnel
+      - name: Verify Deployment & Access via External IP
         run: |
-          # Start tunnel in background to assign the External IP
-          nohup minikube tunnel > tunnel.log 2>&1 &
-          sleep 20
-
-      - name: Verify Deployment and Access App
-        run: |
+          # Wait for the rollout to finish as seen in your logs
           kubectl rollout status deployment/score-deployment --timeout=120s
           
-          # Get the IP shown in your screenshot (e.g., 10.106.251.165)
+          # Fetch the External IP assigned by the tunnel
+          # This replaces the 'localhost' that was failing in your screenshot
           EXTERNAL_IP=$(kubectl get svc score -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          echo "The App is live at: http://$EXTERNAL_IP"
+          echo "App is accessible at: http://$EXTERNAL_IP"
           
-          # Final check to verify the browser application is responding
+          # Requirement: Show the model running through the workflow
+          # This will output the HTML of your student performance model
           curl --retry 5 --retry-connrefused http://$EXTERNAL_IP
 
-      - name: Upload Logs for Screenshots
+      - name: Upload Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: minikube-logs
+          name: deployment-logs
           path: |
             dashboard.log
             tunnel.log
