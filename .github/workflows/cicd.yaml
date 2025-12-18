@@ -81,5 +81,9 @@ jobs:
         run: |
           # Requirement: Minikube Tunnel
           nohup minikube tunnel > tunnel.log 2>&1 &
-          echo -e "\n--- Service Status ---"
+
+      - name: 8. Rerun the services
+        run: |
+          #rerunning the serivces
+          echo -e "\n--- Service---"
           kubectl get service
