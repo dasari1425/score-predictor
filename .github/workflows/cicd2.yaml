@@ -78,3 +78,7 @@ jobs:
           kubectl get pods
           echo -e "\n--- Service Status ---"
           kubectl get service
+      - name: 7. Expose Minikube Service URL
+        run: |
+          echo "--- Access your app via Minikube URL ---"
+          minikube service score --url
