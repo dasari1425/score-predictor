@@ -91,15 +91,3 @@ jobs:
           
           echo "--- Services ---"
           kubectl get svc
-          
-          # Optional: Wait for LoadBalancer IP to appear
-          timeout 60s bash -c 'until kubectl get svc score-service -o jsonpath="{.status.loadBalancer.ingress[0].ip}" | grep -q "."; do echo "Waiting for IP..."; sleep 2; done'
-          
-          EXTERNAL_IP=$(kubectl get svc score -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          echo "App is accessible at: http://$EXTERNAL_IP"
-
-      - name: 7. Simple Integration Test
-        run: |
-          # If the tunnel worked, we can curl the service directly
-          # Using localhost because minikube tunnel routes to 127.0.0.1 on the runner
-          curl -v http://127.0.0.1:80 || echo "Direct IP access failed, trying port-forward fallback"
