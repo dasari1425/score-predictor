@@ -85,20 +85,36 @@ jobs:
 
       - name: 6. Verify Deployment & Connection
         run: |
-          # Wait for pods to be ready
+          # 1. Wait for pods to be ready
           kubectl rollout status deployment/score-deployment --timeout=120s
           
-          # Get the External IP assigned by the tunnel
-          SERVICE_IP=$(kubectl get svc score -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          echo "Service is live at: http://$SERVICE_IP"
-          
-          # Check Service Connectivity
-          curl -v --connect-timeout 5 http://$SERVICE_IP || echo "External IP not yet reachable, trying Localhost"
-          
-          # Fallback check via localhost (common in tunnel environments)
-          curl -v --connect-timeout 5 http://localhost:80
+          # 2. Extract the EXTERNAL-IP (10.106.251.165 from your image)
+          # We use a loop because it can take a few seconds to populate
+          echo "Waiting for External IP to be ready..."
+          for i in {1..10}; do
+            EXTERNAL_IP=$(kubectl get svc score -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            if [ -n "$EXTERNAL_IP" ]; then
+              break
+            fi
+            echo "Still waiting for IP..."
+            sleep 5
+          done
 
-      - name: 7. Log Dashboard URL
+          if [ -z "$EXTERNAL_IP" ]; then
+            echo "Error: External IP was never assigned."
+            exit 1
+          fi
+
+          echo "Success! Service is live at: http://$EXTERNAL_IP"
+          
+          # 3. Test the connection to the specific Minikube IP
+          # We use --retry to handle the brief moment the network bridge is stabilizing
+          curl --retry 5 --retry-connrefused -v http://$EXTERNAL_IP
+
+      - name: 7. Check Dashboard Accessibility
         run: |
-          # Extract URL from logs for visibility
-          grep "http" dashboard.log || echo "Dashboard starting..."
+          # Find the dashboard URL from the background log
+          DASH_URL=$(grep -o 'http://127.0.0.1:[0-9]*/[^ ]*' dashboard.log | head -1)
+          echo "Dashboard Internal URL: $DASH_URL"
+          # Prove the dashboard is responding
+          curl -I $DASH_URL
