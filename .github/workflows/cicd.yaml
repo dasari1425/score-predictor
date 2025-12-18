@@ -89,5 +89,8 @@ jobs:
         run: |
           kubectl rollout status deployment/score-deployment --timeout=120s
           
-          echo "--- Services ---"
-          kubectl get svc
+          echo -e "\n--- Pod Status ---"
+          kubectl get pods
+          
+          echo -e "\n--- Service Status ---"
+          kubectl get service
