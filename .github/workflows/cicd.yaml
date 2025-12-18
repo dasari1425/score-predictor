@@ -1,0 +1,105 @@
+name: CI/CD - Build, Push, Deploy
+
+on:
+  push:
+    branches: [ "Dev" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    name: Build and Push to Docker Hub
+    # Defining outputs so the 'deploy' job can access the tag
+    outputs:
+      image_tag: ${{ steps.vars.outputs.sha_short }}
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Set short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: 3. Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: 4. Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: 5. Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 6. Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: 7. Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/score1:latest
+            ${{ secrets.DOCKER_USERNAME }}/score1:${{ steps.vars.outputs.sha_short }}
+
+  deploy-to-minikube:
+    runs-on: ubuntu-latest
+    name: Deploy to Minikube
+    needs: build-and-push
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Set up and Start Minikube
+        uses: medyagh/setup-minikube@latest
+
+      - name: 3. Update Deployment with new Image Tag
+        run: |
+          # Construct the image name using the output from the previous job
+          IMAGE_NAME="${{ secrets.DOCKER_USERNAME }}/score1:${{ needs.build-and-push.outputs.image_tag }}"
+          
+          # Replace placeholder in deployment.yaml
+          # Ensure your deployment.yaml has the string __IMAGE_NAME__ in the image field
+          sed -i "s|__IMAGE_NAME__|$IMAGE_NAME|g" deployment.yaml
+          
+          echo "Updated deployment.yaml to use image: $IMAGE_NAME"
+
+      - name: 4. Deploy Application
+        run: |
+          kubectl apply -f deployment.yaml
+          kubectl apply -f service.yaml
+
+      - name: 5. Start Minikube Tunnel (Background)
+        run: |
+          # Start tunnel in background. 
+          # We use 'nohup' and '&' so the workflow doesn't hang.
+          nohup minikube tunnel > tunnel.log 2>&1 &
+          
+          # Give the tunnel a moment to establish routes
+          sleep 10
+
+      - name: 6. Verify Deployment & External IP
+        run: |
+          kubectl rollout status deployment/score-deployment --timeout=120s
+          
+          echo "--- Services ---"
+          kubectl get svc
+          
+          # Optional: Wait for LoadBalancer IP to appear
+          timeout 60s bash -c 'until kubectl get svc score-service -o jsonpath="{.status.loadBalancer.ingress[0].ip}" | grep -q "."; do echo "Waiting for IP..."; sleep 2; done'
+          
+          EXTERNAL_IP=$(kubectl get svc score-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "App is accessible at: http://$EXTERNAL_IP"
+
+      - name: 7. Simple Integration Test
+        run: |
+          # If the tunnel worked, we can curl the service directly
+          # Using localhost because minikube tunnel routes to 127.0.0.1 on the runner
+          curl -v http://127.0.0.1:80 || echo "Direct IP access failed, trying port-forward fallback"
